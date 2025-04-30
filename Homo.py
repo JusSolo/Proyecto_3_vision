@@ -33,5 +33,5 @@ def getHomografia(H,ic = -1):
 
             for j in range(ic, i):
                 T = T @ np.linalg.inv(H[j])
-        Hc.append(T)
-    return ic
+        Hic.append(T)
+    return Hic

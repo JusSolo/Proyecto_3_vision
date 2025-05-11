@@ -1,54 +1,41 @@
 import cv2
 import numpy as np
 from matcher import matcher
-from Homo import findHomo, getHomografia, maxmin
-
-def load_and_convert(image_path):
-    """Load image and convert to grayscale"""
-    img = cv2.imread(image_path)
-    if img is None:
-        raise ValueError(f"Could not load image: {image_path}")
-    return cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+from Homo import findHomo, getHomografia, maxmin, warp_image, simple_blend
 
 def main():
-    # Load images
     try:
-        img1 = load_and_convert("muro1.jpg")
-        img2 = load_and_convert("muro2.jpg")
-        img3 = load_and_convert("muro3.jpg")
-    except ValueError as e:
-        print(e)
-        return
+        images = [cv2.resize(cv2.imread(f"muro{i+1}.jpg"), (800, 600)) for i in range(3)] # No aguanta mi pc las imagenes por lo que las tuve que redimensionar
+        grayscale = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in images]
+        
+        matches12 = matcher(grayscale[0], grayscale[1])
+        matches23 = matcher(grayscale[1], grayscale[2])
+        H_list = findHomo([matches12, matches23])
+        
+        Hic = getHomografia(H_list, ic=1)
+        xmin, xmax, ymin, ymax = maxmin(images, Hic)
+        
+        panorama_size = (int(ymax-ymin), int(xmax-xmin), 3)
+        print(f"Tamaño panorama: {panorama_size[1]}x{panorama_size[0]}")
+        
+        warped_images = []
+        masks = []
+        T = np.array([[1, 0, -xmin], [0, 1, -ymin], [0, 0, 1]])
+        
+        for i, img in enumerate(images):
+            print(f"Procesando imagen {i+1}...")
+            H_total = T @ Hic[i]
+            warped = warp_image(img, H_total, panorama_size)
+            warped_images.append(warped)
+            masks.append((warped.max(axis=2) > 0).astype(np.uint8)*255)
+        
+        panorama = simple_blend(warped_images, masks)
+        
+        cv2.imwrite("panorama_resultado.jpg", panorama)
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
 
-    # Match keypoints between consecutive images
-    print("Matching keypoints between images...")
-    matches12 = matcher(img1, img2)
-    matches23 = matcher(img2, img3)
-
-    print(f"Found {len(matches12)} matches between muro1 and muro2")
-    print(f"Found {len(matches23)} matches between muro2 and muro3")
-
-    # Compute homographies
-    print("\nComputing homographies...")
-    H_list = findHomo([matches12, matches23])
-    print("Homography between muro1 and muro2:")
-    print(H_list[0])
-    print("\nHomography between muro2 and muro3:")
-    print(H_list[1])
-
-    # Compute composite homographies
-    print("\nComputing composite homographies...")
-    Hic = getHomografia(H_list)
-    print("Composite homographies:")
-    for i, h in enumerate(Hic):
-        print(f"Image {i+1} to reference:")
-        print(h)
-
-    # Calculate panorama bounds
-    print("\nCalculating panorama bounds...")
-    images = [cv2.imread(f"muro{i+1}.jpg") for i in range(3)]
-    xmin, xmax, ymin, ymax = maxmin(images, 1, Hic)
-    print(f"Panorama bounds: x({xmin:.1f}, {xmax:.1f}), y({ymin:.1f}, {ymax:.1f})")
-
-if __name__ == "__main__":
-    main()
+main()

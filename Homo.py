@@ -1,109 +1,74 @@
 import numpy as np
-
+import cv2
 
 def findHomo(L):
     H = []
-    for l in L:
-        A = np.zeros((len(l)*2,9),float)
-        for i in range(0,len(l),2):
-            X , X_= l[i]
-            x , y  = X
-            x_, y_ = X_
-
-            A[i]   =  [0,0,0,x,y,1,-x*y_,-y*y_,-y_]
-            A[i+1] =  [x,y,1,0,0,0,-x_*x,-y*x_,-x_]
-        U,S,V = np.linalg.svd(A)
+    for matches in L:
+        A = []
+        for (x1, y1), (x2, y2) in matches:
+            A.append([x1, y1, 1, 0, 0, 0, -x2*x1, -x2*y1, -x2])
+            A.append([0, 0, 0, x1, y1, 1, -y2*x1, -y2*y1, -y2])
+        
+        A = np.array(A)
         _, _, V = np.linalg.svd(A)
-        h = V[-1].reshape(3, 3)
-        H.append(h)
+        H_matrix = V[-1].reshape(3, 3)
+        H_matrix /= H_matrix[2, 2]  # Normalización
+        H.append(H_matrix)
     return H
 
-def getHomografia(H,ic = -1):
-    if ic == -1: # por defecto la imagen central es la de enmedio de la lista
-        ic = len(H)//2
-    Hic = []
-    for i in range(len(H)):
-        T = np.eye(3)
-        if i < ic:
-            T = H[0]
-            for j in range(1,i):
-               T = T @ H[j]
-        if i >= ic:
-            if i == ic:
-                Hic.append(T.copy())
-            for j in range(ic, i):
-                T = T @ np.linalg.inv(H[j])
-        Hic.append(T)
+def getHomografia(H_list, ic=None):
+    n = len(H_list) + 1
+    if ic is None:
+        ic = n // 2
+    
+    Hic = [np.eye(3) for _ in range(n)]
+    
+    for i in range(ic-1, -1, -1):
+        Hic[i] = H_list[i] @ Hic[i+1]
+        
+    for i in range(ic+1, n):
+        Hic[i] = np.linalg.inv(H_list[i-1]) @ Hic[i-1]
+        
     return Hic
 
+def maxmin(images, Hic):
+    x_coords, y_coords = [], []
+    
+    for img, H in zip(images, Hic):
+        h, w = img.shape[:2]
+        corners = np.array([[0,0,1], [w-1,0,1], [w-1,h-1,1], [0,h-1,1]]).T
+        transformed = H @ corners
+        transformed /= transformed[2, :]
+        x_coords.extend(transformed[0, :])
+        y_coords.extend(transformed[1, :])
+    
+    return min(x_coords), max(x_coords), min(y_coords), max(y_coords)
 
-def maxmin(Lista,ic,Hic):
-    xmin, xmax = 0 , 0
-    ymin, ymax = 0 , 0
-    print(len(Lista) , len(Hic))
-    for i in range( len(Lista)):
-        L, C, _ = Lista[i].shape
-        H = Hic[i]
-        esquinas = [(0,0),(0,C-1),(L-1,0),(L-1,C-1)]
-        for x, y in esquinas:
-            p = np.array([x, y, 1])  # coordenadas homogéneas
-            z = H @ p
-            z /= z[2]
+def warp_image(img, H, output_shape):
+    return cv2.warpPerspective(
+        img, H, (output_shape[1], output_shape[0]),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0
+    )
 
-            if z[0] < xmin: xmin = z[0]
-            if z[0] > xmax: xmax = z[0]
-            if z[1] < ymin: ymin = z[1]
-            if z[1] > ymax: ymax = z[1]
+def build_laplacian_pyramid(img, levels=5):
+    current = img.astype(np.float32)
+    pyramid = [current]
+    
+    for _ in range(levels-1):
+        current = cv2.pyrDown(current)
+        pyramid.append(current)
+    return pyramid
 
-    return xmin, xmax, ymin, ymax
-
-
-def getfondo(xmin, xmax, ymin, ymax):
-    # genesa una imagen negra donde vamos a pegar las fotos
-    ancho = int(np.ceil(xmax - xmin))
-    alto = int(np.ceil(ymax - ymin))
-    fondo = np.zeros((alto, ancho, 3), dtype=np.uint8)  # Imagen RGB negra
-    return fondo
-
-
-def getCoorAfondo(xmin, ymin):
-    # Traslación para que el punto (xmin, ymin) quede en (0, 0)
-    # devuelve la matriz entre las coordenadas (x,y,1) {las coordenadas que devuelven las homografías} a (x,y,1) posicion del pixcel en el fondo
-    T = np.array([
-        [1, 0, -xmin],
-        [0, 1, -ymin],
-        [0, 0, 1]
-    ])
-    Tinv = np.array([
-        [1, 0, xmin],
-        [0, 1, ymin],
-        [0, 0, 1]
-    ])
-
-    return T , Tinv
-
-def color_choice(p_fondo, Tinv, Hicinv, Fotos):
-    """
-    Devuelve el color (RGB) para un píxel dado en el fondo,
-    basado en UNA de las imágenes originales y sus homografías inversas
-
-    p_fondo: np.array([x, y, 1]) -> coordenada en el fondo NOOLVIDAR AGREGAR EL 1 PUES SON COORDENADAS PROYECTIVA
-    Tinv: matriz que convierte coordenadas del fondo al sistema común (cootdenadas en la imagen central)
-    Hiciv: lista de homografías inversas has np.linalg.inv(Hic[i]) para invertirlas
-    Fotos: lista de imágenes originales a color
-    """
-    # Coordenada en el sistema común (coordenada global)
-    p_global = Tinv @ p_fondo
-    p_global /= p_global[2]
-
-    for i in range(len(Fotos)):
-        p_img = Hinv @ p_global
-        p_img /= p_img[2]
-        # en esta parte se hace una estrategia de blending###################################
-        x_img, y_img = int(round(p_img[0])), int(round(p_img[1]))                           #
-                                                                                            #  Esta es la estratrgia
-        alto, ancho = Fotos[i].shape[:2]                                                    # mas simple
-        if 0 <= x_img < ancho and 0 <= y_img < alto:                                        # no toma en cuenta los colores de
-            return Fotos[i][y_img, x_img]  # Nota: filas = y, columnas = x                  # los pixeles vecinos ni, el color de
-############################################################################################# las otras fotos si hay traslape
-    return np.array([0, 0, 0], dtype=np.uint8)  # negro si ningún pixel válido
+def simple_blend(images, masks):
+    result = np.zeros_like(images[0], dtype=np.float32)
+    total_weight = np.zeros(images[0].shape[:2], dtype=np.float32)
+    
+    for img, mask in zip(images, masks):
+        weight = mask.astype(np.float32)/255.0
+        result += img.astype(np.float32) * weight[..., np.newaxis]
+        total_weight += weight
+    
+    total_weight[total_weight == 0] = 1  # Evitar división por cero
+    return (result / total_weight[..., np.newaxis]).astype(np.uint8)

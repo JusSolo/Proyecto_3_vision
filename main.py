@@ -14,17 +14,14 @@ def main():
         images = [cv2.resize(cv2.imread(image_path), (800, 600)) for image_path in sorted(os.listdir(raw_images))] # No aguanta mi pc las imagenes por lo que las tuve que redimensionar
         grayscale = [cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) for img in images]
         
-        matches = []
-        for index in range(len(grayscale)-1):
-            match = matcher(grayscale[index], grayscale[index+1])
-            matches.append(match)
-            draw_matches(
-                images[index], images[index+1], 
-                match,
-                os.path.join(matches_dir, f"matches_{index}_{index+1}.jpg")
-            )
-            
-        H_list = findHomo(matches)
+        match_list = []
+        for i in range(len(grayscale) - 1):
+            print(f"Calculando correspondencias entre imagen {i+1} y {i+2}...")
+            matches = matcher(grayscale[i], grayscale[i+1])
+            match_list.append(matches)
+
+        # Calcular homografías entre pares consecutivos
+        H_list = findHomo(match_list)
         
         Hic = getHomografia(H_list, ic=1)
         xmin, xmax, ymin, ymax = maxmin(images, Hic)

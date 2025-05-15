@@ -41,3 +41,34 @@ def matcher(I: np.ndarray, Y: np.ndarray) -> list[tuple[tuple[float, float], tup
     ]
 
     return result
+
+def draw_matches(img1, img2, matches, output_path="matches.jpg"):
+    """
+    Dibuja los matches entre dos imágenes y guarda el resultado
+    
+    Args:
+        img1: Primera imagen (BGR)
+        img2: Segunda imagen (BGR)
+        matches: Lista de matches como [(pt1, pt2), ...]
+        output_path: Ruta para guardar la imagen resultante
+    """
+    # Convertir los puntos al formato KeyPoint
+    kp1 = [cv2.KeyPoint(x=pt1[0], y=pt1[1], size=10) for pt1, _ in matches]
+    kp2 = [cv2.KeyPoint(x=pt2[0], y=pt2[1], size=10) for _, pt2 in matches]
+    
+    # Convertir matches al formato DMatch
+    dmatch = [cv2.DMatch(_queryIdx=i, _trainIdx=i, _distance=0) for i in range(len(matches))]
+    
+    # Dibujar matches
+    matched_img = cv2.drawMatches(
+        img1, kp1, 
+        img2, kp2, 
+        dmatch, 
+        None,
+        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS,
+        matchColor=(0, 255, 0)  # Color verde para los matches
+    )
+    
+    # Guardar imagen
+    cv2.imwrite(output_path, matched_img)
+    return matched_img
